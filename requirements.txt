@@ -1,0 +1,14 @@
+streamlit
+pandas
+numpy
+pydantic
+python-dotenv
+pandas
+numpy
+openai
+openai-agents
+requests
+beautifulsoup4
+dotenv
+graphviz
+rich
