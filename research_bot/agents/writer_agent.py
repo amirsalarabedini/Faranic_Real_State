@@ -19,6 +19,6 @@ class ReportData(BaseModel):
 writer_agent = Agent(
     name="WriterAgent",
     instructions=WRITER_AGENT_PROMPT,
-    model="o4-mini",
+    model="gpt-4o-mini",
     output_type=ReportData,
 )
