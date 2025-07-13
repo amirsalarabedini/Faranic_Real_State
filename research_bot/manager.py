@@ -7,6 +7,7 @@ from rich.console import Console
 
 from agents import Runner, custom_span, gen_trace_id, trace
 
+from .agents.clarifying_agent import ClarificationResult, clarifying_agent
 from .agents.planner_agent import WebSearchItem, WebSearchPlan, planner_agent
 from .agents.search_agent import search_agent
 from .agents.writer_agent import ReportData, writer_agent
@@ -34,9 +35,13 @@ class ResearchManager:
                 is_done=True,
                 hide_checkmark=True,
             )
-            search_plan = await self._plan_searches(query)
+            
+            # Clarify the query first
+            clarified_query = await self._clarify_query(query)
+            
+            search_plan = await self._plan_searches(clarified_query)
             search_results = await self._perform_searches(search_plan)
-            report = await self._write_report(query, search_results)
+            report = await self._write_report(clarified_query, search_results)
 
             final_report = f"Report summary\n\n{report.short_summary}"
             self.printer.update_item("final_report", final_report, is_done=True)
@@ -49,20 +54,63 @@ class ResearchManager:
         follow_up_questions = "\n".join(report.follow_up_questions)
         print(f"Follow up questions: {follow_up_questions}")
 
-    async def _plan_searches(self, query: str) -> WebSearchPlan:
-        self.printer.update_item("planning", "Planning searches...")
-        result = await Runner.run(
-            planner_agent,
-            f"Query: {query}",
-        )
+    async def _clarify_query(self, query: str) -> str:
+        """Clarify the user's query if needed."""
         self.printer.update_item(
-            "planning",
-            f"Will perform {len(result.final_output.searches)} searches",
-            is_done=True,
+            "clarifying", "Analyzing query for clarity...", is_done=False
         )
-        return result.final_output_as(WebSearchPlan)
+        
+        with custom_span("clarify_query"):
+            result = await Runner.run(clarifying_agent, query)
+            
+            if isinstance(result.final_output, ClarificationResult):
+                clarification_result = result.final_output
+                if clarification_result.needs_clarification:
+                    # For now, just use the original query but log the clarification needs
+                    self.printer.update_item(
+                        "clarifying",
+                        f"Query needs clarification: {clarification_result.reasoning}",
+                        is_done=True,
+                    )
+                    # TODO: In a real implementation, you might want to:
+                    # - Display the clarification questions to the user
+                    # - Wait for user input
+                    # - Use the clarified query
+                    return query
+                else:
+                    clarified = clarification_result.clarified_query or query
+                    self.printer.update_item(
+                        "clarifying",
+                        f"Query clarified: {clarification_result.reasoning}",
+                        is_done=True,
+                    )
+                    return clarified
+            else:
+                self.printer.update_item(
+                    "clarifying",
+                    "Query analysis complete",
+                    is_done=True,
+                )
+                return query
+
+    async def _plan_searches(self, query: str) -> WebSearchPlan:
+        """Plan the web searches to perform."""
+        self.printer.update_item(
+            "planning", "Planning web searches...", is_done=False
+        )
+        
+        with custom_span("plan_searches"):
+            result = await Runner.run(planner_agent, f"Query: {query}")
+            
+            self.printer.update_item(
+                "planning",
+                f"Planned {len(result.final_output.searches)} searches",
+                is_done=True,
+            )
+            return result.final_output_as(WebSearchPlan)
 
     async def _perform_searches(self, search_plan: WebSearchPlan) -> list[str]:
+        """Perform the planned web searches."""
         with custom_span("Search the web"):
             self.printer.update_item("searching", "Searching...")
             num_completed = 0
@@ -80,23 +128,19 @@ class ResearchManager:
             return results
 
     async def _search(self, item: WebSearchItem) -> str | None:
+        """Perform a single web search."""
         input = f"Search term: {item.query}\nReason for searching: {item.reason}"
         try:
-            result = await Runner.run(
-                search_agent,
-                input,
-            )
+            result = await Runner.run(search_agent, input)
             return str(result.final_output)
         except Exception:
             return None
 
     async def _write_report(self, query: str, search_results: list[str]) -> ReportData:
+        """Write the final report."""
         self.printer.update_item("writing", "Thinking about report...")
         input = f"Original query: {query}\nSummarized search results: {search_results}"
-        result = Runner.run_streamed(
-            writer_agent,
-            input,
-        )
+        result = Runner.run_streamed(writer_agent, input)
         update_messages = [
             "Thinking about report...",
             "Planning report structure...",
