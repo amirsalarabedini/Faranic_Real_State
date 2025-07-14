@@ -1,16 +1,7 @@
-from .clarifying_agent import clarifying_agent, ClarificationResult, ClarificationQuestion
-from .planner_agent import planner_agent, WebSearchPlan, WebSearchItem
-from .search_agent import search_agent
-from .writer_agent import writer_agent, ReportData
+'''Internal agents package for research_bot.
 
-__all__ = [
-    "clarifying_agent",
-    "ClarificationResult", 
-    "ClarificationQuestion",
-    "planner_agent",
-    "WebSearchPlan",
-    "WebSearchItem", 
-    "search_agent",
-    "writer_agent",
-    "ReportData",
-]
+We avoid importing submodules here to prevent circular-import issues with the
+external `agents` library.
+'''
+
+# Nothing to import eagerly.

@@ -55,6 +55,9 @@ class ResearchManager:
         follow_up_questions = "\n".join(report.follow_up_questions)
         print(f"Follow up questions: {follow_up_questions}")
 
+        # Return the report so that UI layers can display it
+        return report
+
     async def _clarify_query(self, query: str) -> str:
         """Clarify the user's query by asking follow-up questions until it is clear."""
         self.printer.update_item(
