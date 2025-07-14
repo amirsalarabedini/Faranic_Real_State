@@ -51,19 +51,3 @@ Or run directly:
 ```bash
 python -m research_bot.main
 ```
-
-## Interactive Clarification Demo
-
-Use the interactive clarifying agent script to refine queries with feedback:
-
-```bash
-python research_bot/clarify_with_feedback.py
-```
-
-This script will:
-1. Ask the clarifying_agent to analyze your query.
-2. Prompt you for answers to any follow-up questions.
-3. Repeat until the query is fully clarified.
-4. Display the final clarified query and the agent’s reasoning.
-
-The conversation history is stored in a `SQLiteSession` so the agent remembers context across turns.

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import time
+import sys
 
 from rich.console import Console
 
-from agents import Runner, custom_span, gen_trace_id, trace
+from agents import Runner, custom_span, gen_trace_id, trace, SQLiteSession
 
 from .agents.clarifying_agent import ClarificationResult, clarifying_agent
 from .agents.planner_agent import WebSearchItem, WebSearchPlan, planner_agent
@@ -55,43 +56,58 @@ class ResearchManager:
         print(f"Follow up questions: {follow_up_questions}")
 
     async def _clarify_query(self, query: str) -> str:
-        """Clarify the user's query if needed."""
+        """Clarify the user's query by asking follow-up questions until it is clear."""
         self.printer.update_item(
             "clarifying", "Analyzing query for clarity...", is_done=False
         )
-        
-        with custom_span("clarify_query"):
-            result = await Runner.run(clarifying_agent, query)
-            
-            if isinstance(result.final_output, ClarificationResult):
-                clarification_result = result.final_output
-                if clarification_result.needs_clarification:
-                    # For now, just use the original query but log the clarification needs
+
+        # Use a dedicated session so that the clarifying agent remembers the conversation
+        session = SQLiteSession(f"clarify_{gen_trace_id()}", ".db/clarify_history.db")
+
+        current_query = query
+        max_rounds = 3  # avoid infinite loops
+        for round_idx in range(max_rounds):
+            with custom_span("clarify_query_round"):
+                result = await Runner.run(clarifying_agent, current_query, session=session)
+                clar_res: ClarificationResult = result.final_output
+
+                # If no clarification needed, we're done
+                if not clar_res.needs_clarification:
+                    clarified = clar_res.clarified_query or current_query
                     self.printer.update_item(
                         "clarifying",
-                        f"Query needs clarification: {clarification_result.reasoning}",
-                        is_done=True,
-                    )
-                    # TODO: In a real implementation, you might want to:
-                    # - Display the clarification questions to the user
-                    # - Wait for user input
-                    # - Use the clarified query
-                    return query
-                else:
-                    clarified = clarification_result.clarified_query or query
-                    self.printer.update_item(
-                        "clarifying",
-                        f"Query clarified: {clarification_result.reasoning}",
+                        f"Query clarified: {clar_res.reasoning}",
                         is_done=True,
                     )
                     return clarified
-            else:
-                self.printer.update_item(
-                    "clarifying",
-                    "Query analysis complete",
-                    is_done=True,
+
+                # Ask user the clarification questions and gather answers
+                answers: list[str] = []
+                print("\n=== Clarification Required ===")
+                for q in clar_res.clarification_questions:
+                    if sys.stdin.isatty():
+                        try:
+                            user_answer = input(f"{q.question} \n> ")
+                        except EOFError:
+                            user_answer = ""
+                    else:
+                        # Non-interactive environment; skip waiting for user input
+                        print("[Non-interactive] Skipping answer input.")
+                        user_answer = ""
+                    answers.append(f"Q: {q.question}\nA: {user_answer}")
+
+                # Combine the original query with the answers to form a new prompt
+                current_query = (
+                    f"Original query: {query}\n\nUser clarifications:\n" + "\n".join(answers)
                 )
-                return query
+
+        # Fallback if maximum rounds reached
+        self.printer.update_item(
+            "clarifying",
+            "Proceeding with best clarified query after multiple attempts...",
+            is_done=True,
+        )
+        return current_query
 
     async def _plan_searches(self, query: str) -> WebSearchPlan:
         """Plan the web searches to perform."""
