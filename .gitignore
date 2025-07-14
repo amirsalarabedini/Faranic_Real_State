@@ -148,3 +148,7 @@ tmp/
 secrets.json
 config.json
 .secrets 
+
+# Database files
+*.db
+.db/
