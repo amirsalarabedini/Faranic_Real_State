@@ -1,0 +1,19 @@
+/* Global custom styles for Research Bot */
+body {
+    background-color: #fafafa;
+}
+
+/* Chat bubbles */
+.chat-message {
+    padding: 8px 12px;
+    border-radius: 6px;
+    margin-bottom: 6px;
+}
+
+.chat-message.user {
+    background-color: #e8f0fe;
+}
+
+.chat-message.assistant {
+    background-color: #fffbe6;
+} 
