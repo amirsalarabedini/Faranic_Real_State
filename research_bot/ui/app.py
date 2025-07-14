@@ -7,15 +7,14 @@ import streamlit as st
 
 # --- Path fix to ensure external `agents` is imported before local research_bot.agents ---
 current_dir = os.path.dirname(__file__)
-project_root = os.path.abspath(os.path.join(current_dir, os.pardir))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
-# Temporarily remove research_bot path to avoid shadowing
+project_root = os.path.abspath(os.path.join(current_dir, os.pardir, os.pardir))
+# Temporarily remove project root to ensure external 'agents' resolves first
 if project_root in sys.path:
     sys.path.remove(project_root)
-from agents import Runner  # noqa: F401 – ensure external package is loaded first
-# Restore project root
+
+from agents import Runner  # external library with Runner
+
+# Re-add project root for local imports
 sys.path.insert(0, project_root)
 
 from research_bot.conversation_manager import ConversationManager
