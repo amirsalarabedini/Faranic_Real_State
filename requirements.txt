@@ -6,7 +6,7 @@ python-dotenv
 pandas
 numpy
 openai
-openai-agents
+git+https://github.com/openai/openai-agents-python@main
 requests
 beautifulsoup4
 dotenv
