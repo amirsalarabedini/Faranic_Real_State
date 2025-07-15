@@ -50,5 +50,5 @@ with **NO METHOD FOUND**.
             include_search_results=True,
         )
     ],
-    model="o4-mini",
+    model="gpt-o4-mini",
 ) 
