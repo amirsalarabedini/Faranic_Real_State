@@ -38,6 +38,13 @@ if "messages" not in st.session_state:
     st.session_state.messages = []  # type: List[dict]
 if "conv_mgr" not in st.session_state:
     st.session_state.conv_mgr = ConversationManager()
+if "current_report" not in st.session_state:
+    st.session_state.current_report = None
+if "current_followups" not in st.session_state:
+    st.session_state.current_followups = []
+if "show_report_for_message" not in st.session_state:
+    st.session_state.show_report_for_message = -1  # Index of message to show report for
+
 conv_mgr: ConversationManager = st.session_state.conv_mgr
 
 # Ensure last_report attribute exists
@@ -45,27 +52,41 @@ if not hasattr(conv_mgr, "last_report"):
     conv_mgr.last_report = None
 
 # ----------------- Render Chat History -----------------
-st.write("DEBUG-messages:", st.session_state.messages)
-for msg in st.session_state.messages:
+for i, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
-        # Display the raw markdown content without extra HTML wrapper to ensure compatibility across Streamlit versions
-        st.markdown(msg["content"], unsafe_allow_html=True)
-        # Show expander with full report right after the summary
-        if msg["role"] == "assistant" and msg["content"].startswith("### Research Complete") and conv_mgr.last_report:
+        st.markdown(msg["content"])
+        
+        # Show expander with full report if this is the right message
+        if (msg["role"] == "assistant" and 
+            "Research Complete" in msg["content"] and 
+            st.session_state.current_report is not None and 
+            i == st.session_state.show_report_for_message):
             with st.expander("📄 Full Report (Markdown)"):
-                st.markdown(conv_mgr.last_report.markdown_report, unsafe_allow_html=True)
+                st.markdown(st.session_state.current_report.markdown_report)
 
-# ----------------- Follow-up Buttons -----------------
-if len(st.session_state.messages) >= 2:
-    last = st.session_state.messages[-1]
-    prev = st.session_state.messages[-2]
-    if last["role"] == "assistant" and prev["role"] == "assistant" and "Research Complete" in prev["content"]:
-        followups = [ln.strip("- ") for ln in last["content"].split("\n") if ln.strip()]
-        if followups:
-            st.subheader("Follow-up questions:")
-            for i, q in enumerate(followups):
-                if st.button(q, key=f"fu_{i}"):
-                    st.session_state.user_input = q
+# ----------------- Follow-up Questions Section -----------------
+# Show follow-up questions if we have them and research is complete
+if (st.session_state.current_followups and 
+    len(st.session_state.messages) > 0 and 
+    st.session_state.messages[-1]["role"] == "assistant"):
+    
+    # Check if the last assistant message indicates research completion
+    last_assistant_msg = None
+    for msg in reversed(st.session_state.messages):
+        if msg["role"] == "assistant":
+            last_assistant_msg = msg
+            break
+    
+    if last_assistant_msg and "Research Complete" in last_assistant_msg["content"]:
+        st.markdown("---")
+        st.subheader("💡 Follow-up Questions:")
+        
+        # Display follow-up questions as buttons
+        for i, question in enumerate(st.session_state.current_followups):
+            question = question.strip()
+            if question:
+                if st.button(question, key=f"followup_{i}"):
+                    st.session_state.user_input = question
                     st.rerun()
 
 # ----------------- User Input -----------------
@@ -89,6 +110,11 @@ def run_async_in_thread(coro):
 
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
+    
+    # Clear previous follow-ups when new input is received
+    st.session_state.current_followups = []
+    st.session_state.current_report = None
+    st.session_state.show_report_for_message = -1
 
     async def backend(msg: str):
         return await conv_mgr.handle_user_message(msg)
@@ -98,9 +124,32 @@ if user_input:
             # Run async code in a separate thread to avoid event loop conflicts
             assistant_msgs = run_async_in_thread(backend(user_input))
 
+    # Process assistant messages
     for m in assistant_msgs:
         st.session_state.messages.append(m)
         # Render the assistant message immediately so the user sees it
         with st.chat_message(m["role"]):
             st.markdown(m["content"], unsafe_allow_html=True)
-    # No explicit st.rerun(); Streamlit automatically reruns after chat_input event 
+        
+        # Check if this is a research completion message
+        if m["role"] == "assistant" and "Research Complete" in m["content"]:
+            # Store the report and set the message index to show it for
+            if conv_mgr.last_report:
+                st.session_state.current_report = conv_mgr.last_report
+                st.session_state.show_report_for_message = len(st.session_state.messages) - 1
+    
+    # After processing all messages, check if we got follow-up questions
+    # The follow-up questions should be in a separate message after the research complete message
+    if len(assistant_msgs) >= 2:
+        # Check if the last message contains follow-up questions
+        last_msg = assistant_msgs[-1]
+        if last_msg["role"] == "assistant" and last_msg["content"].strip():
+            # Parse follow-up questions from the content
+            content = last_msg["content"].strip()
+            # Split by double newlines and filter out empty strings
+            questions = [q.strip() for q in content.split("\n\n") if q.strip()]
+            if questions:
+                st.session_state.current_followups = questions
+    
+    # Force rerun to display follow-up questions
+    st.rerun() 
