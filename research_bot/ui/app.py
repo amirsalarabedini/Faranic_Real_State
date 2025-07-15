@@ -52,17 +52,44 @@ for msg in st.session_state.messages:
                 st.markdown(conv_mgr.last_report.markdown_report, unsafe_allow_html=True)
 
 # ----------------- Follow-up Buttons -----------------
-if len(st.session_state.messages) >= 2:
-    last = st.session_state.messages[-1]
-    prev = st.session_state.messages[-2]
-    if last["role"] == "assistant" and prev["role"] == "assistant" and "Research Complete" in prev["content"]:
-        followups = [ln.strip("- ") for ln in last["content"].split("\n") if ln.strip()]
-        if followups:
-            st.subheader("Follow-up questions:")
-            for i, q in enumerate(followups):
-                if st.button(q, key=f"fu_{i}"):
-                    st.session_state.user_input = q
-                    st.rerun()
+# More robust follow-up questions logic
+def find_follow_up_questions():
+    """Find follow-up questions in the message history"""
+    if len(st.session_state.messages) < 2:
+        return None
+    
+    # Look for the most recent research completion
+    research_complete_idx = -1
+    for i in range(len(st.session_state.messages) - 1, -1, -1):
+        msg = st.session_state.messages[i]
+        if msg["role"] == "assistant" and "Research Complete" in msg["content"]:
+            research_complete_idx = i
+            break
+    
+    if research_complete_idx == -1:
+        return None
+    
+    # Look for follow-up questions in the next message after research complete
+    if research_complete_idx + 1 < len(st.session_state.messages):
+        follow_up_msg = st.session_state.messages[research_complete_idx + 1]
+        if follow_up_msg["role"] == "assistant":
+            # Extract follow-up questions from the content
+            content = follow_up_msg["content"].strip()
+            if content:
+                # Split by double newlines and filter out empty lines
+                questions = [q.strip() for q in content.split("\n\n") if q.strip()]
+                return questions
+    
+    return None
+
+# Display follow-up questions if available
+follow_up_questions = find_follow_up_questions()
+if follow_up_questions:
+    st.subheader("Follow-up questions:")
+    for i, question in enumerate(follow_up_questions):
+        if st.button(question, key=f"followup_{i}"):
+            st.session_state.user_input = question
+            st.rerun()
 
 # ----------------- User Input -----------------
 user_input = st.chat_input("Type and press Enter")
