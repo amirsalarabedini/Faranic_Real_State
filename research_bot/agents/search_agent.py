@@ -8,3 +8,4 @@ search_agent = Agent(
     tools=[WebSearchTool()],
     # Removed model_settings=ModelSettings(tool_choice="required") as it's not compatible with WebSearchTool
 )
+

@@ -1,6 +1,6 @@
 import asyncio
 from agents.extensions.visualization import draw_graph
-from .manager import ResearchManager
+from research_bot.manager import ResearchManager
 
 
 async def main() -> None:

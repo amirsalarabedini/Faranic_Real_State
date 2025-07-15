@@ -12,6 +12,7 @@ from .agents.clarifying_agent import ClarificationResult, clarifying_agent
 from .agents.planner_agent import WebSearchItem, WebSearchPlan, planner_agent
 from .agents.search_agent import search_agent
 from .agents.writer_agent import ReportData, writer_agent
+from .agents.retrieval_agent import retrieval_agent
 from .printer import Printer
 
 
@@ -40,9 +41,15 @@ class ResearchManager:
             # Clarify the query first
             clarified_query = await self._clarify_query(query)
             
-            search_plan = await self._plan_searches(clarified_query)
+            # Retrieve analytical methods from internal knowledge base
+            retrieval_results = await self._retrieve_methods(clarified_query)
+
+            # Plan & perform external web searches – use the methods already retrieved as additional context
+            search_plan = await self._plan_searches(clarified_query, retrieval_results)
             search_results = await self._perform_searches(search_plan)
-            report = await self._write_report(clarified_query, search_results)
+
+            # Write the final report combining both internal knowledge-base insights and web search findings
+            report = await self._write_report(clarified_query, retrieval_results, search_results)
 
             final_report = f"Report summary\n\n{report.short_summary}"
             self.printer.update_item("final_report", final_report, is_done=True)
@@ -112,14 +119,27 @@ class ResearchManager:
         )
         return current_query
 
-    async def _plan_searches(self, query: str) -> WebSearchPlan:
-        """Plan the web searches to perform."""
+    async def _retrieve_methods(self, query: str) -> str:
+        """Fetch relevant analytical methods from the knowledge base."""
+        self.printer.update_item("retrieving", "Retrieving analytical methods…", is_done=False)
+        with custom_span("retrieve_methods"):
+            result = await Runner.run(retrieval_agent, query)
+            self.printer.mark_item_done("retrieving")
+            return str(result.final_output)
+
+    async def _plan_searches(self, query: str, retrieval_results: str) -> WebSearchPlan:
+        """Plan the web searches to perform, informed by methods extracted from the knowledge base."""
         self.printer.update_item(
             "planning", "Planning web searches...", is_done=False
         )
         
         with custom_span("plan_searches"):
-            result = await Runner.run(planner_agent, f"Query: {query}")
+            planner_input = (
+                f"Original query: {query}\n\n"
+                f"Analytical methods already identified from internal knowledge base:\n{retrieval_results}\n\n"
+                "Given these methods, list between 5 and 10 specific web searches you would perform to gather external data, validate the methods, or obtain complementary insights."
+            )
+            result = await Runner.run(planner_agent, planner_input)
             
             self.printer.update_item(
                 "planning",
@@ -155,10 +175,14 @@ class ResearchManager:
         except Exception:
             return None
 
-    async def _write_report(self, query: str, search_results: list[str]) -> ReportData:
+    async def _write_report(self, query: str, retrieval_results: str, search_results: list[str]) -> ReportData:
         """Write the final report."""
         self.printer.update_item("writing", "Thinking about report...")
-        input = f"Original query: {query}\nSummarized search results: {search_results}"
+        input = (
+            f"Original query: {query}\n\n"
+            f"Analytical methods retrieved from knowledge base:\n{retrieval_results}\n\n"
+            f"Summarized web search results: {search_results}"
+        )
         result = Runner.run_streamed(writer_agent, input)
         update_messages = [
             "Thinking about report...",
