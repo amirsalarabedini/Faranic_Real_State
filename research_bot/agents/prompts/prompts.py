@@ -29,7 +29,7 @@ WRITER_AGENT_PROMPT = (
 # Planner Agent Prompt
 PLANNER_AGENT_PROMPT = (
     "You are a helpful research assistant. Given a query, come up with a set of web searches "
-    "to perform to best answer the query. Output between 5 and 10 terms to query for."
+    "to perform to best answer the query. Output between 1 and 2 terms to query for."
 )
 
 # Clarifying Agent Prompt

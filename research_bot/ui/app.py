@@ -62,9 +62,9 @@ def display_message(message: Dict[str, Any], index: int) -> None:
         # Show expander with full report if this is a research completion message
         if (message["role"] == "assistant" and 
             "Research Complete" in message["content"] and 
-            st.session_state.current_report is not None):
-            with st.expander("📄 Full Report (Markdown)"):
-                st.markdown(st.session_state.current_report.markdown_report)
+            message.get("report_data") is not None):
+            with st.expander("📄 Full Report (Markdown)", expanded=True):
+                st.markdown(message["report_data"].markdown_report)
 
 def display_follow_up_questions() -> None:
     """Display follow-up questions if available."""
@@ -84,7 +84,7 @@ def display_follow_up_questions() -> None:
             question = question.strip()
             if question:
                 if st.button(question, key=f"followup_{i}"):
-                    # Add the question as a user message and rerun
+                    # Add the question as a user message and trigger rerun
                     st.session_state.messages.append({"role": "user", "content": question})
                     st.session_state.current_followups = []
                     st.session_state.current_report = None
@@ -95,32 +95,90 @@ def display_chat_history() -> None:
     for i, message in enumerate(st.session_state.messages):
         display_message(message, i)
 
-async def get_agent_response(prompt: str) -> List[Dict[str, Any]]:
+# ----------------- Core Async Functions -----------------
+async def get_agent_response_async(prompt: str) -> List[Dict[str, Any]]:
     """Get response from the conversation manager."""
     return await conv_mgr.handle_user_message(prompt)
+
+def run_async_in_streamlit(coro):
+    """Run async function in Streamlit-compatible way."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If there's already an event loop running, use it
+            import threading
+            result = [None]
+            exception = [None]
+            
+            def run_in_thread():
+                try:
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    result[0] = new_loop.run_until_complete(coro)
+                    new_loop.close()
+                except Exception as e:
+                    exception[0] = e
+            
+            thread = threading.Thread(target=run_in_thread)
+            thread.start()
+            thread.join()
+            
+            if exception[0]:
+                raise exception[0]
+            return result[0]
+        else:
+            # No event loop running, safe to use asyncio.run
+            return asyncio.run(coro)
+    except RuntimeError:
+        # Fallback: create new event loop in thread
+        import threading
+        result = [None]
+        exception = [None]
+        
+        def run_in_thread():
+            try:
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                result[0] = new_loop.run_until_complete(coro)
+                new_loop.close()
+            except Exception as e:
+                exception[0] = e
+        
+        thread = threading.Thread(target=run_in_thread)
+        thread.start()
+        thread.join()
+        
+        if exception[0]:
+            raise exception[0]
+        return result[0]
 
 def process_assistant_messages(assistant_msgs: List[Dict[str, Any]]) -> None:
     """Process and display assistant messages, handling reports and follow-ups."""
     research_complete_found = False
     
-    # Add all assistant messages to session state and display them
+    # Process each assistant message
     for msg in assistant_msgs:
+        # Check if this is a research completion message
+        if msg["role"] == "assistant" and "Research Complete" in msg["content"]:
+            research_complete_found = True
+            # Store the report data with the message
+            if conv_mgr.last_report:
+                msg["report_data"] = conv_mgr.last_report
+                st.session_state.current_report = conv_mgr.last_report
+        
+        # Add message to session state
         st.session_state.messages.append(msg)
         
-        # Display the message
+        # Display the message immediately
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
             
-            # Check if this is a research completion message
-            if msg["role"] == "assistant" and "Research Complete" in msg["content"]:
-                research_complete_found = True
-                # Store the report for display
-                if conv_mgr.last_report:
-                    st.session_state.current_report = conv_mgr.last_report
-                    with st.expander("📄 Full Report (Markdown)"):
-                        st.markdown(st.session_state.current_report.markdown_report)
+            # Display report if available
+            if msg.get("report_data") is not None:
+                with st.expander("📄 Full Report (Markdown)", expanded=True):
+                    st.markdown(msg["report_data"].markdown_report)
     
-    # If we found a research completion message, process follow-up questions
+    # Process follow-up questions if we found a research completion
     if research_complete_found and len(assistant_msgs) >= 2:
         # The follow-up questions should be in the last message
         last_msg = assistant_msgs[-1]
@@ -139,31 +197,36 @@ def handle_user_input(user_input: str) -> None:
     st.session_state.current_report = None
     st.session_state.processing = True
     
-    # Add user message
+    # Add user message to session state
     st.session_state.messages.append({"role": "user", "content": user_input})
     
     # Display user message
     with st.chat_message("user"):
         st.markdown(user_input)
     
-    # Get agent response
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking…"):
-            try:
-                # Run the async function properly
-                assistant_msgs = asyncio.run(get_agent_response(user_input))
-                st.session_state.processing = False
-                
-                # Process the assistant messages
-                process_assistant_messages(assistant_msgs)
-                
-            except Exception as e:
-                st.session_state.processing = False
-                st.error(f"An error occurred: {str(e)}")
-                st.session_state.messages.append({
-                    "role": "assistant", 
-                    "content": f"Sorry, I encountered an error: {str(e)}"
-                })
+    # Get agent response with proper async handling
+    with st.spinner("Thinking…"):
+        try:
+            # Use the Streamlit-compatible async runner
+            assistant_msgs = run_async_in_streamlit(get_agent_response_async(user_input))
+            st.session_state.processing = False
+            
+            # Process the assistant messages
+            process_assistant_messages(assistant_msgs)
+            
+        except Exception as e:
+            st.session_state.processing = False
+            st.error(f"An error occurred: {str(e)}")
+            # Add error message to session state
+            error_msg = {
+                "role": "assistant", 
+                "content": f"Sorry, I encountered an error: {str(e)}"
+            }
+            st.session_state.messages.append(error_msg)
+            
+            # Display error message
+            with st.chat_message("assistant"):
+                st.markdown(error_msg["content"])
 
 # ----------------- Main UI Flow -----------------
 
