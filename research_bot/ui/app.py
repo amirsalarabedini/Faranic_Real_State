@@ -45,6 +45,7 @@ if not hasattr(conv_mgr, "last_report"):
     conv_mgr.last_report = None
 
 # ----------------- Render Chat History -----------------
+st.write("DEBUG-messages:", st.session_state.messages)
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         # Display the raw markdown content without extra HTML wrapper to ensure compatibility across Streamlit versions
@@ -99,4 +100,7 @@ if user_input:
 
     for m in assistant_msgs:
         st.session_state.messages.append(m)
+        # Render the assistant message immediately so the user sees it without waiting for a rerun
+        with st.chat_message(m["role"]):
+            st.markdown(m["content"], unsafe_allow_html=True)
     st.rerun() 
