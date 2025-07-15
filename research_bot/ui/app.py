@@ -1,247 +1,141 @@
+"""Streamlit Research Bot – resilient, Cloud‑safe version with continuing chat after follow‑ups
+===========================================================================================
+
+Changes in this revision
+------------------------
+* **Follow‑up continuity** – clicking a follow‑up now clears the previous report and allows a new
+  agent run; `st.stop()` is only triggered when the app is *not* processing.
+* **State resets** – `ask_user()` now resets `report_md` and `followups` so the next rerun shows
+  the live conversation instead of the old report.
+"""
+
+from __future__ import annotations
+
 import asyncio
 import os
 import sys
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 import streamlit as st
 
-# --- Path fix to ensure external `agents` is imported before local research_bot.agents ---
-current_dir = os.path.dirname(__file__)
-project_root = os.path.abspath(os.path.join(current_dir, os.pardir, os.pardir))
-# Temporarily remove project root to ensure external 'agents' resolves first
-if project_root in sys.path:
-    sys.path.remove(project_root)
+# -----------------------------------------------------------------------------
+#  Import runner & conversation manager (same mechanics as original file)
+# -----------------------------------------------------------------------------
+CUR_DIR = os.path.dirname(__file__)
+PROJECT_ROOT = os.path.abspath(os.path.join(CUR_DIR, os.pardir, os.pardir))
+if PROJECT_ROOT in sys.path:
+    sys.path.remove(PROJECT_ROOT)  # ensure external "agents" takes priority
 
-from agents import Runner  # external library with Runner
+from agents import Runner  # type: ignore – external lib
 
-# Re-add project root for local imports
-sys.path.insert(0, project_root)
-
+sys.path.insert(0, PROJECT_ROOT)  # local imports now OK
 from research_bot.conversation_manager import ConversationManager
 
+# ─────────────────────────────  Streamlit config  ─────────────────────────────
 st.set_page_config(page_title="Research Bot", layout="wide")
 
-# ---- Load static CSS ----
-css_path = os.path.join(current_dir, "static", "style.css")
-if os.path.exists(css_path):
-    with open(css_path, "r") as f:
+CSS_PATH = os.path.join(CUR_DIR, "static", "style.css")
+if os.path.exists(CSS_PATH):
+    with open(CSS_PATH) as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 st.title("🧑‍🔬 Research Bot")
 st.markdown("Ask me anything to research. I will clarify if needed, search the web, and deliver a full markdown report.")
 
-# ----------------- Session State Initialization -----------------
-def initialize_session_state():
-    """Initialize all session state variables used in the app."""
-    defaults = {
-        "messages": [],
-        "conv_mgr": ConversationManager(),
-        "current_report": None,
-        "current_followups": [],
-        "processing": False,
-    }
-    
-    # Set default values for any uninitialized state
-    for key, default_value in defaults.items():
-        st.session_state.setdefault(key, default_value)
-
-initialize_session_state()
+# ───────────────────────────  Session state setup  ────────────────────────────
+DEFAULTS: Dict[str, Any] = {
+    "messages": [],                    # chat history
+    "conv_mgr": ConversationManager(), # long‑lived agent
+    "report_md": None,                # last markdown report (str)
+    "followups": [],                  # list[str]
+    "processing": False,              # flag while agent works
+}
+for k, v in DEFAULTS.items():
+    st.session_state.setdefault(k, v)
 
 conv_mgr: ConversationManager = st.session_state.conv_mgr
 
-# Ensure last_report attribute exists
-if not hasattr(conv_mgr, "last_report"):
-    conv_mgr.last_report = None
+# ──────────────────────────  Helper render functions  ─────────────────────────
 
-# ----------------- UI Helper Functions -----------------
-def display_message(message: Dict[str, Any], index: int) -> None:
-    """Display a single message in the chat interface."""
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-        
-        # Show expander with full report if this is a research completion message
-        if (message["role"] == "assistant" and 
-            "Research Complete" in message["content"] and 
-            message.get("report_data") is not None):
-            with st.expander("📄 Full Report (Markdown)", expanded=True):
-                st.markdown(message["report_data"].markdown_report)
-
-def display_follow_up_questions() -> None:
-    """Display follow-up questions if available."""
-    if not st.session_state.current_followups:
-        return
-        
-    # Only show follow-up questions if the last message is from assistant and contains "Research Complete"
-    if (st.session_state.messages and 
-        st.session_state.messages[-1]["role"] == "assistant" and
-        "Research Complete" in st.session_state.messages[-1]["content"]):
-        
-        st.markdown("---")
-        st.subheader("💡 Follow-up Questions:")
-        
-        # Display follow-up questions as buttons
-        for i, question in enumerate(st.session_state.current_followups):
-            question = question.strip()
-            if question:
-                if st.button(question, key=f"followup_{i}"):
-                    # Add the question as a user message and trigger rerun
-                    st.session_state.messages.append({"role": "user", "content": question})
-                    st.session_state.current_followups = []
-                    st.session_state.current_report = None
-                    st.rerun()
-
-def display_chat_history() -> None:
-    """Display all messages in the chat history."""
-    for i, message in enumerate(st.session_state.messages):
-        display_message(message, i)
-
-# ----------------- Core Async Functions -----------------
-async def get_agent_response_async(prompt: str) -> List[Dict[str, Any]]:
-    """Get response from the conversation manager."""
-    return await conv_mgr.handle_user_message(prompt)
-
-def run_async_in_streamlit(coro):
-    """Run async function in Streamlit-compatible way."""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If there's already an event loop running, use it
-            import threading
-            result = [None]
-            exception = [None]
-            
-            def run_in_thread():
-                try:
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    result[0] = new_loop.run_until_complete(coro)
-                    new_loop.close()
-                except Exception as e:
-                    exception[0] = e
-            
-            thread = threading.Thread(target=run_in_thread)
-            thread.start()
-            thread.join()
-            
-            if exception[0]:
-                raise exception[0]
-            return result[0]
-        else:
-            # No event loop running, safe to use asyncio.run
-            return asyncio.run(coro)
-    except RuntimeError:
-        # Fallback: create new event loop in thread
-        import threading
-        result = [None]
-        exception = [None]
-        
-        def run_in_thread():
-            try:
-                new_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(new_loop)
-                result[0] = new_loop.run_until_complete(coro)
-                new_loop.close()
-            except Exception as e:
-                exception[0] = e
-        
-        thread = threading.Thread(target=run_in_thread)
-        thread.start()
-        thread.join()
-        
-        if exception[0]:
-            raise exception[0]
-        return result[0]
-
-def process_assistant_messages(assistant_msgs: List[Dict[str, Any]]) -> None:
-    """Process and display assistant messages, handling reports and follow-ups."""
-    research_complete_found = False
-    
-    # Process each assistant message
-    for msg in assistant_msgs:
-        # Check if this is a research completion message
-        if msg["role"] == "assistant" and "Research Complete" in msg["content"]:
-            research_complete_found = True
-            # Store the report data with the message
-            if conv_mgr.last_report:
-                msg["report_data"] = conv_mgr.last_report
-                st.session_state.current_report = conv_mgr.last_report
-        
-        # Add message to session state
-        st.session_state.messages.append(msg)
-        
-        # Display the message immediately
+def render_chat() -> None:
+    """Display the full chat including the last assistant summary and report."""
+    for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
-            
-            # Display report if available
-            if msg.get("report_data") is not None:
-                with st.expander("📄 Full Report (Markdown)", expanded=True):
-                    st.markdown(msg["report_data"].markdown_report)
-    
-    # Process follow-up questions if we found a research completion
-    if research_complete_found and len(assistant_msgs) >= 2:
-        # The follow-up questions should be in the last message
-        last_msg = assistant_msgs[-1]
-        if last_msg["role"] == "assistant" and last_msg["content"].strip():
-            # Extract follow-up questions from the content
-            content = last_msg["content"].strip()
-            # Split by double newlines and filter out empty strings
-            questions = [q.strip() for q in content.split("\n\n") if q.strip()]
-            if questions:
-                st.session_state.current_followups = questions
 
-def handle_user_input(user_input: str) -> None:
-    """Handle user input and get agent response."""
-    # Clear previous state
-    st.session_state.current_followups = []
-    st.session_state.current_report = None
+    # Render stored report only when we're idle, not while processing a new prompt
+    if st.session_state.report_md and not st.session_state.processing:
+        st.header("Research Complete")
+        with st.expander("📄 Full Report (Markdown)", expanded=True):
+            st.markdown(st.session_state.report_md, unsafe_allow_html=True)
+
+        if st.session_state.followups:
+            st.subheader("💡 Follow‑up Questions:")
+            for i, q in enumerate(st.session_state.followups):
+                if st.button(q, key=f"fu_{i}"):
+                    ask_user(q)  # clears report & starts new run
+        # Prevent duplicate input box when idle
+        st.stop()
+
+# ─────────────────────────────  Async utilities  ──────────────────────────────
+async def get_response_async(prompt: str) -> List[Dict[str, str]]:
+    """Delegate to the ConversationManager (your custom async implementation)."""
+    return await conv_mgr.handle_user_message(prompt)
+
+# ─────────────────────────────  Core input logic  ─────────────────────────────
+
+def ask_user(prompt: str) -> None:
+    """Handle user prompt – runs agent, persists results, triggers rerun."""
+    # reset previous outcome so it doesn't block the UI on next pass
+    st.session_state.report_md = None
+    st.session_state.followups = []
+
+    # append user message immediately
+    st.session_state.messages.append({"role": "user", "content": prompt})
     st.session_state.processing = True
-    
-    # Add user message to session state
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    
-    # Display user message
-    with st.chat_message("user"):
-        st.markdown(user_input)
-    
-    # Get agent response with proper async handling
+    st.rerun()  # redraw now with spinner & disabled input
+
+
+def run_agent_and_store(prompt: str) -> None:
+    """Long‑running step that calls the async agent and stores results."""
     with st.spinner("Thinking…"):
         try:
-            # Use the Streamlit-compatible async runner
-            assistant_msgs = run_async_in_streamlit(get_agent_response_async(user_input))
+            assistant_msgs = asyncio.run(get_response_async(prompt))
+        except Exception as exc:  # noqa: BLE001
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": f"Sorry, I encountered an error: {exc}",
+            })
             st.session_state.processing = False
-            
-            # Process the assistant messages
-            process_assistant_messages(assistant_msgs)
-            
-        except Exception as e:
-            st.session_state.processing = False
-            st.error(f"An error occurred: {str(e)}")
-            # Add error message to session state
-            error_msg = {
-                "role": "assistant", 
-                "content": f"Sorry, I encountered an error: {str(e)}"
-            }
-            st.session_state.messages.append(error_msg)
-            
-            # Display error message
-            with st.chat_message("assistant"):
-                st.markdown(error_msg["content"])
+            return
 
-# ----------------- Main UI Flow -----------------
+    # Expect first assistant message to contain summary + report link etc.
+    if assistant_msgs and "Research Complete" in assistant_msgs[0]["content"]:
+        report_obj = getattr(conv_mgr, "last_report", None)
+        if report_obj:
+            st.session_state.report_md = report_obj.markdown_report  # type: ignore[attr-defined]
 
-# Display chat history
-display_chat_history()
+        # Extract follow‑ups from last assistant message (simple blank‑line split)
+        followups_raw = assistant_msgs[-1]["content"].strip().split("\n\n")
+        st.session_state.followups = [q.strip() for q in followups_raw if q.strip()]
 
-# Display follow-up questions if available
-display_follow_up_questions()
+    # Persist assistant messages (strings only) and finish
+    st.session_state.messages.extend(assistant_msgs)
+    st.session_state.processing = False
+    st.rerun()
 
-# Handle user input
-if not st.session_state.processing:
-    user_input = st.chat_input("Type and press Enter")
-    if user_input:
-        handle_user_input(user_input)
-        st.rerun()
+# ───────────────────────────────  UI pipeline  ────────────────────────────────
+render_chat()  # may call st.stop() if report already shown and idle
+
+# Show input or a disabled stub depending on processing flag
+if st.session_state.processing:
+    st.chat_input("Processing… Please wait", disabled=True)
 else:
-    # Disable input while processing
-    st.chat_input("Processing... Please wait", disabled=True) 
+    user_text = st.chat_input("Type and press Enter")
+    if user_text:
+        ask_user(user_text)
+
+# If we just added a prompt in the *previous* rerun, do the heavy work now
+if st.session_state.processing and st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+    last_prompt = st.session_state.messages[-1]["content"]
+    run_agent_and_store(last_prompt)
