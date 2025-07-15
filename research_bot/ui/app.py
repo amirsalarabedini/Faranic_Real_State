@@ -100,7 +100,7 @@ if user_input:
 
     for m in assistant_msgs:
         st.session_state.messages.append(m)
-        # Render the assistant message immediately so the user sees it without waiting for a rerun
+        # Render the assistant message immediately so the user sees it
         with st.chat_message(m["role"]):
             st.markdown(m["content"], unsafe_allow_html=True)
-    st.rerun() 
+    # No explicit st.rerun(); Streamlit automatically reruns after chat_input event 
