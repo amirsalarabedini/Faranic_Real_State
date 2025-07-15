@@ -1,0 +1,26 @@
+[server]
+# Increase timeout for long-running research operations
+runOnSave = false
+enableCORS = false
+enableXsrfProtection = false
+maxUploadSize = 200
+
+[browser]
+# Prevent auto-opening in cloud environments
+gatherUsageStats = false
+
+[theme]
+# Optional: customize theme
+primaryColor = "#FF6B6B"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#262730"
+
+[runner]
+# Important for async operations
+magicEnabled = true
+installTracer = false
+fixMatplotlib = false
+postScriptGC = false
+fastReruns = true
+enforceSerializableSessionState = false 

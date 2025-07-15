@@ -129,9 +129,6 @@ dmypy.json
 ehthumbs.db
 Thumbs.db
 
-# Streamlit
-.streamlit/
-
 # Logs
 *.log
 logs/
