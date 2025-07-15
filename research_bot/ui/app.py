@@ -2,6 +2,8 @@ import asyncio
 import os
 import sys
 from typing import List
+import threading
+import concurrent.futures
 
 import streamlit as st
 
@@ -70,6 +72,20 @@ user_input = st.chat_input("Type and press Enter")
 if user_input is None:
     user_input = st.session_state.pop("user_input", None)
 
+def run_async_in_thread(coro):
+    """Run async coroutine in a separate thread to avoid event loop conflicts."""
+    def run_in_thread():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+    
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future = executor.submit(run_in_thread)
+        return future.result()
+
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
 
@@ -78,14 +94,8 @@ if user_input:
 
     with st.chat_message("assistant"):
         with st.spinner("Thinking…"):
-            # Use a more robust method for running async code in Streamlit
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            
-            assistant_msgs = loop.run_until_complete(backend(user_input))
+            # Run async code in a separate thread to avoid event loop conflicts
+            assistant_msgs = run_async_in_thread(backend(user_input))
 
     for m in assistant_msgs:
         st.session_state.messages.append(m)
