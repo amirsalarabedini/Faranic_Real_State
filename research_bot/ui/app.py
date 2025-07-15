@@ -78,7 +78,15 @@ if user_input:
 
     with st.chat_message("assistant"):
         with st.spinner("Thinking…"):
-            assistant_msgs = asyncio.run(backend(user_input))
+            # Use a more robust method for running async code in Streamlit
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            assistant_msgs = loop.run_until_complete(backend(user_input))
+
     for m in assistant_msgs:
         st.session_state.messages.append(m)
     st.rerun() 
