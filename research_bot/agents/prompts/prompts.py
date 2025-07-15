@@ -20,7 +20,10 @@ WRITER_AGENT_PROMPT = (
     "You should first come up with an outline for the report that describes the structure and "
     "flow of the report. Then, generate the report and return that as your final output.\n"
     "The final output should be in markdown format, and it should be lengthy and detailed. Aim "
-    "for 5-10 pages of content, at least 1000 words."
+    "for 5-10 pages of content, at least 1000 words.\n\n"
+    "After the report, you must also suggest 3-5 follow-up questions that the user might want "
+    "to ask next. These should be questions that build upon the information in the report or "
+    "explore related topics."
 )
 
 # Planner Agent Prompt
